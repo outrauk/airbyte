@@ -41,6 +41,7 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
     # reads it back out of the same local staging volume before the sync frees the space. It is not a stand-in
     # for a fixed file-size cap; a file is only rejected if the pod's disk genuinely can't fit it.
     DISK_SPACE_SAFETY_MARGIN = 1.2
+    ARCHIVED_STORAGE_CLASSES = {"GLACIER", "DEEP_ARCHIVE"}
 
     def __init__(self):
         super().__init__()
@@ -335,6 +336,23 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
             if "Contents" in response:
                 for file in response["Contents"]:
                     if self._is_folder(file):
+                        continue
+
+                    # Filter on the raw S3 listing metadata BEFORE calling _handle_file(),
+                    # since _handle_file() opens the object immediately for zip-format streams
+                    # (to read the central directory) - by the time is_modified_after_start_date()
+                    # is checked further down against remote_file.last_modified, the file has
+                    # already been opened. These two checks use only listing metadata (no extra
+                    # S3 calls) so they can safely run first.
+                    file_last_modified = file["LastModified"].astimezone(pytz.utc).replace(tzinfo=None)
+                    if not self.is_modified_after_start_date(file_last_modified):
+                        continue
+
+                    storage_class = file.get("StorageClass", "STANDARD")
+                    if storage_class in self.ARCHIVED_STORAGE_CLASSES:
+                        logger.warning(
+                            f"Skipping {file['Key']}: storage class '{storage_class}' does not support direct reads without a restore."
+                        )
                         continue
 
                     for remote_file in self._handle_file(file):
