@@ -19,7 +19,6 @@ from airbyte_cdk.sources.file_based.file_record_data import FileRecordData
 from airbyte_cdk.sources.file_based.remote_file import UploadableRemoteFile
 from source_sftp_bulk.client import SFTPClient
 from source_sftp_bulk.spec import SourceSFTPBulkSpec
-from source_sftp_bulk.zip_reader import SFTPRemoteFileInsideArchive, SFTPZipFileHandler, DecompressedStream, ZipContentReader
 
 
 class SFTPBulkUploadableRemoteFile(UploadableRemoteFile):
@@ -269,16 +268,23 @@ class SourceSFTPBulkStreamReader(AbstractFileBasedStreamReader):
                         file_uri = f"{current_dir}/{item.filename}"
                         file_mtime = datetime.fromtimestamp(item.st_mtime)
 
-                        for expanded_file in self._handle_file(file_uri, file_mtime, logger):
-                            files_batch.append(expanded_file)
+                        file = SFTPBulkUploadableRemoteFile(
+                            sftp_client=self.sftp_client,
+                            logger=logger,
+                            uri=file_uri,
+                            last_modified=file_mtime,
+                            updated_at=file_mtime.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                            config=self.config,
+                        )
+                        files_batch.append(file)
 
-                            # Process batch when it reaches BATCH_SIZE
-                            if len(files_batch) >= BATCH_SIZE:
-                                yield from self.filter_files_by_globs_and_start_date(
-                                    files_batch,
-                                    globs,
-                                )
-                                files_batch = []
+                        # Process batch when it reaches BATCH_SIZE
+                        if len(files_batch) >= BATCH_SIZE:
+                            yield from self.filter_files_by_globs_and_start_date(
+                                files_batch,
+                                globs,
+                            )
+                            files_batch = []
             except AirbyteTracedException:
                 raise
             except Exception as e:
@@ -292,46 +298,7 @@ class SourceSFTPBulkStreamReader(AbstractFileBasedStreamReader):
                 globs,
             )
 
-    def _handle_file(self, file_uri: str, file_mtime, logger):
-        if not file_uri.endswith(".zip"):
-            yield SFTPBulkUploadableRemoteFile(
-                sftp_client=self.sftp_client, logger=logger, uri=file_uri,
-                last_modified=file_mtime, updated_at=file_mtime.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                config=self.config,
-            )
-            return
-
-        remote_zip = self.sftp_client.sftp_connection.open(file_uri, mode="rb")
-        try:
-            zip_handler = SFTPZipFileHandler(remote_zip)
-            zip_members, cd_start = zip_handler.get_zip_files()
-            for zip_member in zip_members:
-                remote_file = SFTPRemoteFileInsideArchive(
-                    uri=file_uri + "#" + zip_member.filename,
-                    last_modified=datetime(*zip_member.date_time),
-                    start_offset=zip_member.header_offset + cd_start,
-                    compressed_size=zip_member.compress_size,
-                    uncompressed_size=zip_member.file_size,
-                    compression_method=zip_member.compress_type,
-                    flag_bits=zip_member.flag_bits,
-                    crc=zip_member.CRC,
-                    extra=zip_member.extra,
-                )
-                if remote_file.is_encrypted and not self.config.password:
-                    raise AirbyteTracedException(
-                        f"'{remote_file.uri}' is password-protected, but no zip password is configured for this source.",
-                        failure_type=FailureType.config_error,
-                    )
-                yield remote_file
-        finally:
-            remote_zip.close()
-
-    def open_file(self, file, mode: FileReadMode, encoding: Optional[str], logger: logging.Logger) -> IOBase:
-        if isinstance(file, SFTPRemoteFileInsideArchive):
-            zip_path = file.uri.split("#")[0]
-            raw = self.sftp_client.sftp_connection.open(zip_path, mode="rb")
-            decompressed_stream = DecompressedStream(raw, file, password=self.config.password)
-            return ZipContentReader(decompressed_stream, encoding)
+    def open_file(self, file: SFTPBulkUploadableRemoteFile, mode: FileReadMode, encoding: Optional[str], logger: logging.Logger) -> IOBase:
         remote_file = self.sftp_client.sftp_connection.open(file.uri, mode=mode.value)
         return remote_file
 
