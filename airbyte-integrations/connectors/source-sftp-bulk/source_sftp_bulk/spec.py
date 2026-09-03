@@ -49,6 +49,14 @@ class SourceSFTPBulkSpec(AbstractFileBasedSpec):
         default="/",
         pattern_descriptor="/folder_to_sync",
     )
+    password: Optional[str] = Field(
+        title="Zip Password",
+        description="Password to decrypt password-protected ZIP archives encountered during the sync. "
+        "Supports both traditional 'ZipCrypto' and WinZip AES-encrypted passwords.",
+        default=None,
+        airbyte_secret=True,
+        order=8,
+    )
 
     delivery_method: Union[DeliverRecords, DeliverRawFiles] = Field(
         title="Delivery Method",
