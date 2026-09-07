@@ -397,6 +397,7 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
             yield self._handle_regular_file(file)
 
     def _handle_zip_file(self, file, zip_password: Optional[str] = None):
+        effective_password = zip_password or self.config.password
         zip_handler = ZipFileHandler(self.s3_client, self.config)
         zip_members, cd_start = zip_handler.get_zip_files(file["Key"])
 
@@ -411,9 +412,9 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
                 flag_bits=zip_member.flag_bits,
                 crc=zip_member.CRC,
                 extra=zip_member.extra,
-                zip_password=zip_password,
+                zip_password=effective_password,
             )
-            if remote_file.is_encrypted and not zip_password:
+            if remote_file.is_encrypted and not effective_password:
                 raise CustomFileBasedException(
                     f"'{remote_file.uri}' is password-protected, but no zip password is configured for this source.",
                     failure_type=FailureType.config_error,
