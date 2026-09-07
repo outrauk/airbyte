@@ -27,7 +27,7 @@ from airbyte_cdk.sources.file_based.exceptions import CustomFileBasedException, 
 from airbyte_cdk.sources.file_based.file_based_stream_reader import AbstractFileBasedStreamReader, FileReadMode
 from airbyte_cdk.sources.file_based.file_record_data import FileRecordData
 from airbyte_cdk.sources.file_based.remote_file import RemoteFile
-from source_s3.v4.config import Config
+from source_s3.v4.config import Config, S3FileBasedStreamConfig
 from source_s3.v4.zip_reader import DecompressedStream, RemoteFileInsideArchive, ZipContentReader, ZipFileHandler
 
 
@@ -137,6 +137,18 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
 
         return autorefresh_session.client("s3", **client_kv_args)
 
+    def _get_stream_config(self, globs: List[str]) -> Optional[S3FileBasedStreamConfig]:
+        for stream in self.config.streams:
+            if list(stream.globs) == list(globs):
+                return stream
+        return None
+
+    def _resolve_zip_password(self, globs: List[str]) -> Optional[str]:
+        stream_config = self._get_stream_config(globs)
+        if stream_config is not None and stream_config.password:
+            return stream_config.password
+        return self.config.password
+
     def get_matching_files(self, globs: List[str], prefix: Optional[str], logger: logging.Logger) -> Iterable[RemoteFile]:
         """
         Get all files matching the specified glob patterns.
@@ -145,10 +157,11 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
         prefixes = [prefix] if prefix else self.get_prefixes_from_globs(globs)
         seen = set()
         total_n_keys = 0
+        zip_password = self._resolve_zip_password(globs)
 
         try:
             for current_prefix in prefixes if prefixes else [None]:
-                for remote_file in self._page(s3, globs, self.config.bucket, current_prefix, seen, logger):
+                for remote_file in self._page(s3, globs, self.config.bucket, current_prefix, seen, logger, zip_password):
                     total_n_keys += 1
                     yield remote_file
 
@@ -319,7 +332,7 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
         return file["Key"].endswith("/")
 
     def _page(
-        self, s3: BaseClient, globs: List[str], bucket: str, prefix: Optional[str], seen: Set[str], logger: logging.Logger
+        self, s3: BaseClient, globs: List[str], bucket: str, prefix: Optional[str], seen: Set[str], logger: logging.Logger, zip_password: Optional[str] = None
     ) -> Iterable[RemoteFile]:
         """
         Page through lists of S3 objects.
@@ -354,7 +367,7 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
                         )
                         continue
 
-                    for remote_file in self._handle_file(file):
+                    for remote_file in self._handle_file(file, zip_password):
                         if (
                             self.file_matches_globs(remote_file, globs)
                             and self.is_modified_after_start_date(remote_file.last_modified)
@@ -377,13 +390,14 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
             return True
         return last_modified_date >= pendulum.parse(self.config.start_date).naive()
 
-    def _handle_file(self, file):
+    def _handle_file(self, file, zip_password: Optional[str] = None):
         if file["Key"].endswith(".zip"):
-            yield from self._handle_zip_file(file)
+            yield from self._handle_zip_file(file, zip_password)
         else:
             yield self._handle_regular_file(file)
 
-    def _handle_zip_file(self, file):
+    def _handle_zip_file(self, file, zip_password: Optional[str] = None):
+        effective_password = zip_password or self.config.password
         zip_handler = ZipFileHandler(self.s3_client, self.config)
         zip_members, cd_start = zip_handler.get_zip_files(file["Key"])
 
@@ -398,8 +412,9 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
                 flag_bits=zip_member.flag_bits,
                 crc=zip_member.CRC,
                 extra=zip_member.extra,
+                zip_password=effective_password,
             )
-            if remote_file.is_encrypted and not self.config.password:
+            if remote_file.is_encrypted and not effective_password:
                 raise CustomFileBasedException(
                     f"'{remote_file.uri}' is password-protected, but no zip password is configured for this source.",
                     failure_type=FailureType.config_error,
