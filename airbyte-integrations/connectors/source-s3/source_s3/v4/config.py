@@ -15,7 +15,16 @@ from airbyte_cdk.sources.file_based.config.file_based_stream_config import FileB
 
 class S3FileBasedStreamConfig(FileBasedStreamConfig):
     """S3-specific stream config that adds a flag to skip the full parse check for Parquet files."""
-
+    password: Optional[str] = Field(
+        title="Zip Password",
+        description=(
+            "Password to decrypt password-protected ZIP archives matched by this stream's globs. "
+            "Overrides the source-level Zip Password for this stream only. Leave blank to fall back "
+            "to the source-level password, or if this stream's files aren't encrypted."
+        ),
+        default=None,
+        airbyte_secret=True,
+    )
     skip_full_check_for_parquet: bool = Field(
         title="Skip Full Check for Parquet",
         description=(
@@ -133,6 +142,7 @@ class Config(AbstractFileBasedSpec):
         skip_prop = s3_stream_schema["properties"]["skip_full_check_for_parquet"]
         stream_item_props = schema["properties"]["streams"]["items"]["properties"]
         stream_item_props["skip_full_check_for_parquet"] = skip_prop
+        stream_item_props["password"] = s3_stream_schema["properties"]["password"]
 
         # Hide API processing option until https://github.com/airbytehq/airbyte-platform-internal/issues/10354 is fixed
         processing_options = dpath.util.get(schema, "properties/streams/items/properties/format/oneOf/4/properties/processing/oneOf")

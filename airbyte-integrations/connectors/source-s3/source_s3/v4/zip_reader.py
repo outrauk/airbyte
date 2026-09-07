@@ -96,6 +96,7 @@ class RemoteFileInsideArchive(RemoteFile):
     flag_bits: int = 0
     crc: int = 0
     extra: bytes = b""
+    zip_password: Optional[str] = None
 
     @property
     def is_encrypted(self) -> bool:
@@ -281,7 +282,7 @@ class DecompressedStream(io.IOBase):
     ) -> Tuple[int, int]:
         """Validate a traditional ZipCrypto password against its 12-byte encryption header."""
         if not password:
-            raise ValueError(f"'{file_info.uri}' is password-protected, but no zip password was configured for this source.")
+            raise ValueError(f"'{file_info.uri}' is password-protected, but no zip password was configured for this stream or source.")
 
         password_bytes = password.encode("utf-8")
         self._file.seek(content_start)
@@ -305,7 +306,7 @@ class DecompressedStream(io.IOBase):
     def _init_aes_decryption(self, file_info: RemoteFileInsideArchive, password: Optional[str], content_start: int) -> Tuple[int, int]:
         """Validate a WinZip AES password against its 2-byte password-verification value."""
         if not password:
-            raise ValueError(f"'{file_info.uri}' is password-protected, but no zip password was configured for this source.")
+            raise ValueError(f"'{file_info.uri}' is password-protected, but no zip password was configured for this stream or source.")
 
         parsed_extra = _parse_winzip_aes_extra_field(file_info.extra)
         if parsed_extra is None:
