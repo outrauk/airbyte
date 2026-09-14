@@ -42,6 +42,15 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
     DISK_SPACE_SAFETY_MARGIN = 1.2
     ARCHIVED_STORAGE_CLASSES = {"GLACIER", "DEEP_ARCHIVE"}
 
+    # The CDK base class's own FILE_SIZE_LIMIT (1.5 GB) is disabled here, for consistency with the
+    # disk-space preflight check below. Today this is redundant with the fact that upload() below
+    # is fully self-contained and never calls super().upload() (which is where the base class's
+    # check lives) - but making it explicit means the 1.5 GB cap can't silently reappear if upload()
+    # is ever refactored to defer to the base class, or if any other CDK code path consults
+    # self.FILE_SIZE_LIMIT directly. _ensure_enough_disk_space is the real gate: a file is only
+    # rejected if the sync pod's disk genuinely can't fit it, not because it crossed a fixed byte count.
+    FILE_SIZE_LIMIT = float("inf")
+
     def __init__(self):
         super().__init__()
         self._s3_client = None
