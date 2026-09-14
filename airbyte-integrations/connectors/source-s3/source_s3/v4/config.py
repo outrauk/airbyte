@@ -100,6 +100,17 @@ class Config(AbstractFileBasedSpec):
         order=7,
     )
 
+    requester_pays: bool = Field(
+        title="Requester Pays",
+        default=False,
+        description=(
+            "Whether the S3 bucket has Requester Pays enabled. If true, all list and read "
+            "requests will include the AWS Requester Pays flag, and your AWS account will be "
+            "billed for the associated request and data transfer costs."
+        ),
+        order=8,
+    )
+
     delivery_method: DeliverRecords | DeliverRawFiles = Field(
         title="Delivery Method",
         discriminator="delivery_type",

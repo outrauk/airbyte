@@ -142,28 +142,28 @@ class ZipFileHandler:
         """
         end_range = f"{start + size - 1}" if size else ""
         range_str = f"bytes={start}-{end_range}"
-        response = self.s3_client.get_object(Bucket=self.config.bucket, Key=filename, Range=range_str)
+        request_kwargs = {"Bucket": self.config.bucket, "Key": filename, "Range": range_str}
+        if self.config.requester_pays:
+            request_kwargs["RequestPayer"] = "requester"
+        response = self.s3_client.get_object(**request_kwargs)
         return response["Body"].read()
 
     def _find_signature(
-        self,
-        filename: str,
-        signature: bytes,
-        initial_buffer_size: int = BUFFER_SIZE_DEFAULT,
-        max_buffer_size: int = MAX_BUFFER_SIZE_DEFAULT,
+            self,
+            filename: str,
+            signature: bytes,
+            initial_buffer_size: int = BUFFER_SIZE_DEFAULT,
+            max_buffer_size: int = MAX_BUFFER_SIZE_DEFAULT,
     ) -> Optional[bytes]:
         """
         Search for a specific signature in the file by checking chunks of increasing size.
         If the signature is not found within the max_buffer_size, None is returned.
-
-        :param filename: The name of the file in S3.
-        :param signature: The byte signature to search for.
-        :param initial_buffer_size: Initial size of the buffer to search in.
-        :param max_buffer_size: Maximum size of the buffer to search in.
-        :return: The chunk of data containing the signature or None if not found.
         """
         buffer_size = initial_buffer_size
-        file_size = self.s3_client.head_object(Bucket=self.config.bucket, Key=filename)["ContentLength"]
+        head_kwargs = {"Bucket": self.config.bucket, "Key": filename}
+        if self.config.requester_pays:
+            head_kwargs["RequestPayer"] = "requester"
+        file_size = self.s3_client.head_object(**head_kwargs)["ContentLength"]
 
         while buffer_size <= max_buffer_size:
             chunk = self._fetch_data_from_s3(filename, file_size - buffer_size)

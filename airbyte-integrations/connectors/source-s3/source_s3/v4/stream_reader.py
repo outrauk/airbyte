@@ -158,6 +158,9 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
             return stream_config.password
         return self.config.password
 
+    def _request_payer_kwargs(self) -> dict:
+        return {"RequestPayer": "requester"} if self.config.requester_pays else {}
+
     def get_matching_files(self, globs: List[str], prefix: Optional[str], logger: logging.Logger) -> Iterable[RemoteFile]:
         """
         Get all files matching the specified glob patterns.
@@ -294,7 +297,13 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
         # at some moment maybe we will require to play with the max_pool_connections and max_concurrency of s3 config
         start_download_time = time.time()
         progress_handler = self.create_progress_handler(file_size, local_file_path, logger)
-        self.s3_client.download_file(self.config.bucket, file.uri, local_file_path, Callback=progress_handler)
+        self.s3_client.download_file(
+            self.config.bucket,
+            file.uri,
+            local_file_path,
+            ExtraArgs=self._request_payer_kwargs() or None,
+            Callback=progress_handler,
+        )
         write_duration = time.time() - start_download_time
         logger.info(f"Finished downloading the file {file.uri} and saved to {local_file_path} in {write_duration:,.2f} seconds.")
 
@@ -334,6 +343,7 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
         s3_object: boto3.s3.Object = self.s3_client.get_object(
             Bucket=self.config.bucket,
             Key=file.uri,
+            **self._request_payer_kwargs(),
         )
         return cast(int, s3_object["ContentLength"])
 
@@ -348,7 +358,7 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
         Page through lists of S3 objects.
         """
         total_n_keys_for_prefix = 0
-        kwargs = {"Bucket": bucket}
+        kwargs = {"Bucket": bucket, **self._request_payer_kwargs()}
         while True:
             response = s3.list_objects_v2(Prefix=prefix, **kwargs) if prefix else s3.list_objects_v2(**kwargs)
             key_count = response.get("KeyCount")
