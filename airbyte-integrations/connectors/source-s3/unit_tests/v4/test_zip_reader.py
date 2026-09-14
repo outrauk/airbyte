@@ -247,7 +247,7 @@ def mock_s3_client():
 
 @pytest.fixture
 def mock_config():
-    return MagicMock(bucket="test-bucket")
+    return MagicMock(bucket="test-bucket", requester_pays=False)
 
 
 @pytest.fixture
@@ -259,6 +259,13 @@ def test_fetch_data_from_s3(zip_file_handler):
     zip_file_handler._fetch_data_from_s3("test_file", 0, 10)
     zip_file_handler.s3_client.get_object.assert_called_with(Bucket="test-bucket", Key="test_file", Range="bytes=0-9")
 
+def test_fetch_data_from_s3_with_requester_pays(mock_s3_client):
+    config = MagicMock(bucket="test-bucket", requester_pays=True)
+    handler = ZipFileHandler(mock_s3_client, config)
+    handler._fetch_data_from_s3("test_file", 0, 10)
+    handler.s3_client.get_object.assert_called_with(
+        Bucket="test-bucket", Key="test_file", Range="bytes=0-9", RequestPayer="requester"
+    )
 
 def test_find_signature(zip_file_handler):
     zip_file_handler.s3_client.head_object.return_value = {"ContentLength": 1024}
