@@ -145,7 +145,14 @@ jobs:
     # that matters has to be spelled out here - including that neither test job actually failed.
     # `!= 'failure'` rather than `== 'success'`: a test job that was legitimately skipped (its
     # connector didn't change) must not block the other one's release.
+    #
+    # !cancelled() is required here too: by default GitHub skips a job outright when ANY of its
+    # needs didn't run, before even looking at its own if: - and test-connectors/test-jvm-connectors
+    # are each routinely skipped whenever only the other one's connector changed. !cancelled()
+    # forces this if: to actually be evaluated in that case, so the != 'failure' checks below are
+    # the real gate instead of an accidental skip.
     if: >-
+      !cancelled() &&
       github.ref_name == 'master' &&
       (needs.has-connector-changed.outputs.python-connector-changed == 'true' ||
        needs.has-connector-changed.outputs.jvm-connector-changed == 'true') &&
