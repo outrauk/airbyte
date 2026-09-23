@@ -178,4 +178,50 @@ class ObjectStorageDestinationStateUTest {
         val turtleState = persister.load(turtleStream)
         assertEquals(0, turtleState.getObjectsToDelete().size)
     }
+
+    @Test
+    fun `test get objects to delete for a file-transfer stream`() = runTest {
+        // File-transfer keys carry the source file's own relative path (here nested under
+        // "subdir/"), so they never match the {stream}/{number} pattern `matcher` is built
+        // from - "bird/subdir/2" doesn't match "(bird)/([0-9]+)$suffix". A file-transfer
+        // stream must still be able to find these for deletion; a non-file-transfer stream
+        // must not (that's covered by the "cat"/"turtle-1" cases above, whose keys always
+        // match the matcher).
+        val mockObjects =
+            ConcurrentLinkedQueue(listOf(MockObj("bird/subdir/2"), MockObj("bird/subdir/5")))
+        coEvery { client.list(any()) } answers
+            {
+                val prefix = firstArg<String>()
+                mockObjects.asFlow().filter { it.key.startsWith(prefix) }
+            }
+
+        every { pathFactory.getPathMatcher(any(), any()) } answers
+            {
+                val stream = firstArg<DestinationStream>()
+                val suffix = secondArg<String>()
+                PathMatcher(
+                    Regex("(${stream.mappedDescriptor.name})/([0-9]+)$suffix"),
+                    mapOf("suffix" to 3)
+                )
+            }
+
+        coEvery { client.getMetadata(any()) } answers
+            {
+                val key = firstArg<String>()
+                mapOf("test-ab-generation-id" to key.split("/").last())
+            }
+
+        val persister = ObjectStorageFallbackPersister(client, pathFactory, destinationConfig)
+
+        val birdStream = mockk<DestinationStream>(relaxed = true)
+        every { birdStream.mappedDescriptor } returns DestinationStream.Descriptor("test", "bird")
+        every { birdStream.minimumGenerationId } returns 3L
+        every { birdStream.shouldBeTruncatedAtEndOfSync() } returns true
+        every { birdStream.includeFiles } returns true
+        val birdState = persister.load(birdStream)
+        assertEquals(
+            setOf("bird/subdir/2"),
+            birdState.getObjectsToDelete().map { it.second.key }.toSet()
+        )
+    }
 }
