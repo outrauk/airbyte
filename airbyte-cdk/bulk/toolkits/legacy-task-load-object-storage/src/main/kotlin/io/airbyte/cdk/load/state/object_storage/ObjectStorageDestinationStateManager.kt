@@ -63,12 +63,17 @@ class ObjectStorageDestinationState(
 
         val prefix = pathFactory.getLongestStreamConstantPrefix(stream)
         log.info {
-            "Searching $prefix for objects to delete (minGenId=${stream.minimumGenerationId}; matcher=${matcher.regex})"
+            "Searching $prefix for objects to delete (minGenId=${stream.minimumGenerationId}; matcher=${matcher.regex}; fileTransfer=${stream.includeFiles})"
         }
 
+        // File-transfer objects are keyed by the source file's own relative path, not by
+        // the {part_number}{format_extension} pattern `matcher` is built from, so they never
+        // match it. Skip the matcher for those streams and rely on the generation-id check
+        // below instead - it's already sufficient, since every uploaded object (file-transfer
+        // or not) is tagged with its sync's generation id.
         return client
             .list(prefix)
-            .filter { matcher.match(it.key) != null }
+            .filter { stream.includeFiles || matcher.match(it.key) != null }
             .toList() // Force the list call to complete before initiating metadata calls
             .map { obj ->
                 coroutineScope {
