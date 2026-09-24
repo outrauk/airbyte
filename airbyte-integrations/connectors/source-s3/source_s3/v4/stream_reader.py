@@ -23,6 +23,7 @@ from typing_extensions import override
 
 from airbyte_cdk import FailureType
 from airbyte_cdk.models import AirbyteRecordMessageFileReference
+from airbyte_cdk.sources.file_based.config.abstract_file_based_spec import DeliverRawFiles
 from airbyte_cdk.sources.file_based.exceptions import CustomFileBasedException, ErrorListingFiles, FileBasedSourceError, FileSizeLimitError
 from airbyte_cdk.sources.file_based.file_based_stream_reader import AbstractFileBasedStreamReader, FileReadMode
 from airbyte_cdk.sources.file_based.file_record_data import FileRecordData
@@ -415,7 +416,10 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
         # that needs the archive's contents, and treating each member as its own "virtual" file
         # doesn't even work here, since upload()/file_size() use RemoteFile.uri directly as the
         # real S3 key, which a "<zip key>#<member>" URI is not. So a .zip is just a regular file.
-        if file["Key"].endswith(".zip") and self.config.delivery_method.delivery_type != "use_file_transfer":
+        # (isinstance rather than a `delivery_type` string comparison: Config.delivery_method's
+        # default is the bare string "use_records_transfer" rather than a DeliverRecords
+        # instance, since pydantic v1 doesn't validate/coerce field defaults.)
+        if file["Key"].endswith(".zip") and not isinstance(self.config.delivery_method, DeliverRawFiles):
             yield from self._handle_zip_file(file, zip_password)
         else:
             yield self._handle_regular_file(file)
