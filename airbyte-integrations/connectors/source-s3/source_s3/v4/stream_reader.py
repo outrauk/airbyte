@@ -411,7 +411,11 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
         return last_modified_date >= pendulum.parse(self.config.start_date).naive()
 
     def _handle_file(self, file, zip_password: Optional[str] = None):
-        if file["Key"].endswith(".zip"):
+        # In file-transfer mode we ship files to the destination as-is; there's no record parser
+        # that needs the archive's contents, and treating each member as its own "virtual" file
+        # doesn't even work here, since upload()/file_size() use RemoteFile.uri directly as the
+        # real S3 key, which a "<zip key>#<member>" URI is not. So a .zip is just a regular file.
+        if file["Key"].endswith(".zip") and self.config.delivery_method.delivery_type != "use_file_transfer":
             yield from self._handle_zip_file(file, zip_password)
         else:
             yield self._handle_regular_file(file)

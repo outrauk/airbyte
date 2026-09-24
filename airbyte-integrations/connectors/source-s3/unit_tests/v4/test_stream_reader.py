@@ -17,7 +17,7 @@ from moto import mock_sts
 from pydantic.v1 import AnyUrl
 from source_s3.v4.config import Config
 from source_s3.v4.stream_reader import SourceS3StreamReader
-from source_s3.v4.zip_reader import ZipFileHandler
+from source_s3.v4.zip_reader import RemoteFileInsideArchive, ZipFileHandler
 
 from airbyte_cdk.sources.file_based.config.abstract_file_based_spec import AbstractFileBasedSpec
 from airbyte_cdk.sources.file_based.exceptions import CustomFileBasedException, ErrorListingFiles, FileBasedSourceError, FileSizeLimitError
@@ -453,3 +453,34 @@ def test_handle_zip_file_unencrypted_members_unaffected_without_password():
 
     assert len(files) == 1
     assert files[0].is_encrypted is False
+
+
+def test_handle_file_treats_zip_as_a_single_regular_file_in_file_transfer_mode():
+    """
+    In file-transfer mode there's no record parser that needs the archive's contents, and
+    exploding it into per-member "<zip key>#<member>" virtual files doesn't work anyway, since
+    upload()/file_size() use RemoteFile.uri directly as the real S3 key. So a .zip must be
+    listed - and later downloaded - as a single opaque file, exactly like any other object.
+    """
+    reader = SourceS3StreamReader()
+    reader.config = _make_file_transfer_config()
+
+    with patch.object(ZipFileHandler, "get_zip_files") as mock_get_zip_files:
+        files = list(reader._handle_file({"Key": "archive.zip", "LastModified": datetime.now()}))
+
+    mock_get_zip_files.assert_not_called()
+    assert len(files) == 1
+    assert files[0].uri == "archive.zip"
+    assert not isinstance(files[0], RemoteFileInsideArchive)
+
+
+def test_handle_file_still_expands_zip_members_in_records_transfer_mode():
+    reader = SourceS3StreamReader()
+    reader.config = Config(bucket="test", aws_access_key_id="test", aws_secret_access_key="test", streams=[])
+
+    plain_member = _make_zip_info("plain.csv")
+    with patch.object(ZipFileHandler, "get_zip_files", return_value=([plain_member], 0)):
+        files = list(reader._handle_file({"Key": "archive.zip", "LastModified": datetime.now()}))
+
+    assert len(files) == 1
+    assert files[0].uri == "archive.zip#plain.csv"
