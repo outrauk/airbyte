@@ -2,7 +2,7 @@
 # Copyright (c) 2023 Airbyte, Inc., all rights reserved.
 #
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import dpath.util
 from pydantic.v1 import AnyUrl, Field, root_validator
@@ -10,7 +10,14 @@ from pydantic.v1.error_wrappers import ValidationError
 
 from airbyte_cdk import is_cloud_environment
 from airbyte_cdk.sources.file_based.config.abstract_file_based_spec import AbstractFileBasedSpec, DeliverRawFiles, DeliverRecords
+from airbyte_cdk.sources.file_based.config.avro_format import AvroFormat
+from airbyte_cdk.sources.file_based.config.excel_format import ExcelFormat
 from airbyte_cdk.sources.file_based.config.file_based_stream_config import FileBasedStreamConfig
+from airbyte_cdk.sources.file_based.config.jsonl_format import JsonlFormat
+from airbyte_cdk.sources.file_based.config.parquet_format import ParquetFormat
+from airbyte_cdk.sources.file_based.config.unstructured_format import UnstructuredFormat
+
+from source_s3.v4.csv_format import S3CsvFormat
 
 
 class S3FileBasedStreamConfig(FileBasedStreamConfig):
@@ -33,6 +40,30 @@ class S3FileBasedStreamConfig(FileBasedStreamConfig):
         ),
         default=False,
     )
+    # Overrides the parent's `format` field only to swap CsvFormat for S3CsvFormat (adds
+    # `pad_missing_columns`); title/description/order are unchanged from FileBasedStreamConfig.
+    format: Union[AvroFormat, S3CsvFormat, JsonlFormat, ParquetFormat, UnstructuredFormat, ExcelFormat] = Field(
+        title="Format",
+        description="The configuration options that are used to alter how to read incoming files that deviate from the standard formatting.",
+    )
+
+    @root_validator
+    def validate_pad_missing_columns_requires_schema(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        `pad_missing_columns` makes short rows the common case for a stream, which can otherwise
+        crash automatic schema inference on the resulting padded `null` values (see
+        plan-pad-missing-columns.md). Require an explicit schema up front instead, at config-parse
+        time -- enforced for CHECK, DISCOVER, and READ alike, since all three parse the config
+        through `Config(**config)` before doing anything else.
+        """
+        fmt = values.get("format")
+        if isinstance(fmt, S3CsvFormat) and fmt.pad_missing_columns and not values.get("input_schema"):
+            raise ValidationError(
+                "`pad_missing_columns` requires an explicit `input_schema` to be configured for this "
+                "stream, since automatic schema inference cannot safely handle padded null values.",
+                model=S3FileBasedStreamConfig,
+            )
+        return values
 
 
 class Config(AbstractFileBasedSpec):
@@ -154,6 +185,14 @@ class Config(AbstractFileBasedSpec):
         stream_item_props = schema["properties"]["streams"]["items"]["properties"]
         stream_item_props["skip_full_check_for_parquet"] = skip_prop
         stream_item_props["password"] = s3_stream_schema["properties"]["password"]
+
+        # The plain CsvFormat used to build `parent_schema` above doesn't know about
+        # `pad_missing_columns` (an S3-specific extension of CsvFormat, see csv_format.py), so
+        # inject its schema into the CSV format's oneOf entry, alongside `ignore_errors_on_fields_mismatch`.
+        csv_format_schema = next(
+            fmt for fmt in stream_item_props["format"]["oneOf"] if fmt["properties"]["filetype"]["default"] == "csv"
+        )
+        csv_format_schema["properties"]["pad_missing_columns"] = S3CsvFormat.schema(*args, **kwargs)["properties"]["pad_missing_columns"]
 
         # Hide API processing option until https://github.com/airbytehq/airbyte-platform-internal/issues/10354 is fixed
         processing_options = dpath.util.get(schema, "properties/streams/items/properties/format/oneOf/4/properties/processing/oneOf")

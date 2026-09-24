@@ -34,6 +34,7 @@ from airbyte_cdk.sources.file_based.config.validate_config_transfer_modes import
     use_file_transfer,
 )
 from airbyte_cdk.sources.file_based.file_based_source import DEFAULT_CONCURRENCY, FileBasedSource
+from airbyte_cdk.sources.file_based.file_types import default_parsers
 from airbyte_cdk.sources.file_based.stream.abstract_file_based_stream import (
     AbstractFileBasedStream,
 )
@@ -44,6 +45,8 @@ from source_s3.source import SourceS3Spec
 from source_s3.utils import airbyte_message_to_json
 from source_s3.v4.availability_strategy import SourceS3AvailabilityStrategy
 from source_s3.v4.config import Config
+from source_s3.v4.csv_format import S3CsvFormat
+from source_s3.v4.csv_parser import S3CsvParser
 from source_s3.v4.cursor import Cursor
 from source_s3.v4.legacy_config_transformer import LegacyConfigTransformer
 from source_s3.v4.stream_reader import SourceS3StreamReader
@@ -268,4 +271,9 @@ class SourceS3(FileBasedSource):
             # These will be provided later, after we have wrapped proper error handling.
             config=None,
             state=None,
+            # Registered under S3CsvFormat (not CsvFormat) because AbstractFileBasedStream.get_parser()
+            # looks up parsers by exact type(config.format), and S3FileBasedStreamConfig.format
+            # resolves CSV streams to S3CsvFormat instances. See csv_parser.py for why this is needed
+            # (pad_missing_columns).
+            parsers={**default_parsers, S3CsvFormat: S3CsvParser()},
         )

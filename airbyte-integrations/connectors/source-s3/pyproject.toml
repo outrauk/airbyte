@@ -3,7 +3,7 @@ requires = [ "poetry-core>=1.0.0",]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-version = "4.19.0"
+version = "4.20.0"
 name = "source-s3"
 description = "Source implementation for S3."
 authors = [ "Airbyte <contact@airbyte.io>",]
@@ -22,7 +22,13 @@ wcmatch = "^10.0"
 dill = "^0.3.4"
 transformers = "^4.38.2"
 urllib3 = "<2"
-airbyte-cdk = {extras = ["file-based"], version = "^7.0.0"}
+# Pinned to an exact version (not a caret range) rather than "^7.0.0": source_s3/v4/csv_parser.py
+# duplicates internal, unversioned CDK logic (_CsvReader.read_data / _row_to_dict) that isn't part
+# of airbyte-cdk's public API, to implement pad_missing_columns (see plan-pad-missing-columns.md).
+# A `poetry update` picking a different 7.x release could silently change that internal method's
+# shape underneath the duplicated copy. Bump this deliberately and re-diff csv_parser.py against
+# the new version (and re-run unit_tests/v4/test_csv_parser.py's anti-drift test) before bumping.
+airbyte-cdk = {extras = ["file-based"], version = "7.23.6"}
 pendulum = "^3.0.0"
 psutil = "^7.0.0"
 numpy = ">=2.2.6,<3"
