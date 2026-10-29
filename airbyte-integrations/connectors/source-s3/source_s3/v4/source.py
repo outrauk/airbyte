@@ -33,7 +33,7 @@ from airbyte_cdk.sources.file_based.config.validate_config_transfer_modes import
     preserve_directory_structure,
     use_file_transfer,
 )
-from airbyte_cdk.sources.file_based.file_based_source import DEFAULT_CONCURRENCY, FileBasedSource
+from airbyte_cdk.sources.file_based.file_based_source import FileBasedSource
 from airbyte_cdk.sources.file_based.file_types import default_parsers
 from airbyte_cdk.sources.file_based.stream.abstract_file_based_stream import (
     AbstractFileBasedStream,
@@ -49,7 +49,7 @@ from source_s3.v4.csv_format import S3CsvFormat
 from source_s3.v4.csv_parser import S3CsvParser
 from source_s3.v4.cursor import Cursor
 from source_s3.v4.legacy_config_transformer import LegacyConfigTransformer
-from source_s3.v4.stream_reader import SourceS3StreamReader
+from source_s3.v4.stream_reader import FILE_DOWNLOAD_WORKERS, SourceS3StreamReader
 from source_s3.v4.throttled_stream import ThrottledFileBasedStream
 
 
@@ -63,7 +63,7 @@ _V3_DEPRECATION_FIELD_MAPPING = {
 
 
 class SourceS3(FileBasedSource):
-    _concurrency_level = DEFAULT_CONCURRENCY
+    _concurrency_level = FILE_DOWNLOAD_WORKERS
 
     def _make_default_stream(
         self,

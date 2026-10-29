@@ -14,6 +14,7 @@ import pendulum
 import psutil
 import pytz
 import smart_open
+from boto3.s3.transfer import TransferConfig
 from botocore.client import BaseClient
 from botocore.client import Config as ClientConfig
 from botocore.credentials import RefreshableCredentials
@@ -33,6 +34,20 @@ from source_s3.v4.zip_reader import DecompressedStream, RemoteFileInsideArchive,
 
 
 AWS_EXTERNAL_ID = getenv("AWS_ASSUME_ROLE_EXTERNAL_ID")
+
+# Download concurrency, sized for a 4Gi source pod. Left at the CDK default (100 files, each downloaded with 10
+# threads and a ~250 MB in-memory write queue) the source was OOM-killed within seconds of starting a sync.
+# Peak buffered memory is roughly FILE_DOWNLOAD_WORKERS * DOWNLOAD_WRITE_QUEUE_CHUNKS * 256 KB (s3transfer's io chunk size).
+FILE_DOWNLOAD_WORKERS = 16  # files downloaded in parallel (the CDK's concurrency level)
+DOWNLOAD_THREADS_PER_FILE = 4  # parallel ranged GETs within one multipart download
+DOWNLOAD_WRITE_QUEUE_CHUNKS = 100  # 256 KB chunks queued in memory per file before the download thread blocks on disk
+# The shared client needs one pooled connection per in-flight request, otherwise urllib3 opens and discards extras.
+S3_MAX_POOL_CONNECTIONS = FILE_DOWNLOAD_WORKERS * DOWNLOAD_THREADS_PER_FILE
+
+DOWNLOAD_TRANSFER_CONFIG = TransferConfig(
+    max_concurrency=DOWNLOAD_THREADS_PER_FILE,
+    max_io_queue=DOWNLOAD_WRITE_QUEUE_CHUNKS,
+)
 
 
 class SourceS3StreamReader(AbstractFileBasedStreamReader):
@@ -82,7 +97,11 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
             raise ValueError("Source config is missing; cannot create the S3 client.")
 
         if self._s3_client is None:
-            client_kv_args = _get_s3_compatible_client_args(self.config) if self.config.endpoint else {}
+            client_kv_args = (
+                _get_s3_compatible_client_args(self.config)
+                if self.config.endpoint
+                else {"config": ClientConfig(max_pool_connections=S3_MAX_POOL_CONNECTIONS)}
+            )
 
             # Set the region_name if it's provided in the config
             if self.config.region_name:
@@ -295,7 +314,6 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
         logger.info(
             f"Starting to download the file {file.uri} with size: {file_size / (1024 * 1024):,.2f} MB ({file_size / (1024 * 1024 * 1024):.2f} GB)"
         )
-        # at some moment maybe we will require to play with the max_pool_connections and max_concurrency of s3 config
         start_download_time = time.time()
         progress_handler = self.create_progress_handler(file_size, local_file_path, logger)
         self.s3_client.download_file(
@@ -304,6 +322,7 @@ class SourceS3StreamReader(AbstractFileBasedStreamReader):
             local_file_path,
             ExtraArgs=self._request_payer_kwargs() or None,
             Callback=progress_handler,
+            Config=DOWNLOAD_TRANSFER_CONFIG,
         )
         write_duration = time.time() - start_download_time
         logger.info(f"Finished downloading the file {file.uri} and saved to {local_file_path} in {write_duration:,.2f} seconds.")
@@ -459,7 +478,7 @@ def _get_s3_compatible_client_args(config: Config) -> dict:
     Returns map of args used for creating s3 boto3 client.
     """
     client_kv_args = {
-        "config": ClientConfig(s3={"addressing_style": "auto"}),
+        "config": ClientConfig(s3={"addressing_style": "auto"}, max_pool_connections=S3_MAX_POOL_CONNECTIONS),
         "endpoint_url": config.endpoint,
         "use_ssl": True,
         "verify": True,
